@@ -25,10 +25,10 @@ def download_reel(url: str, output_dir: str) -> tuple[bool, str, str | None]:
     """
     ydl_opts = {
         "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        # Pick the best single-file mp4 (no ffmpeg merge needed)
+        "format": "best[ext=mp4]/best",
         "quiet": True,
         "no_warnings": True,
-        "merge_output_format": "mp4",
     }
 
     try:
