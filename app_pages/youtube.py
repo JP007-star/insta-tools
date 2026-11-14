@@ -25,49 +25,97 @@ def fetch_video_info(url: str) -> dict | None:
         return None
 
 
-def download_video(url: str, output_dir: str, fmt: str) -> tuple[bool, str, str | None]:
-    format_map = {
-        "Best quality (MP4)":    "best[ext=mp4]/best",
-        "1080p":                 "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
-        "720p":                  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]",
-        "480p":                  "best[height<=480][ext=mp4]/best[height<=480]",
-        "Audio only (MP3)":      "bestaudio/best",
-    }
-    is_audio = fmt == "Audio only (MP3)"
-    ydl_opts = {
-        "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
-        "format": format_map.get(fmt, "best[ext=mp4]/best"),
-        "quiet": True,
-        "no_warnings": True,
-    }
-    if is_audio:
-        ydl_opts["postprocessors"] = [{
+FORMAT_OPTIONS = {
+    "🎬  MP4 — Best quality":  {
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "merge_output_format": "mp4",
+        "ext": "mp4",
+        "mime": "video/mp4",
+    },
+    "🎬  MP4 — 1080p": {
+        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
+        "merge_output_format": "mp4",
+        "ext": "mp4",
+        "mime": "video/mp4",
+    },
+    "🎬  MP4 — 720p": {
+        "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]",
+        "merge_output_format": "mp4",
+        "ext": "mp4",
+        "mime": "video/mp4",
+    },
+    "🎬  MP4 — 480p": {
+        "format": "best[height<=480][ext=mp4]/best[height<=480]",
+        "merge_output_format": "mp4",
+        "ext": "mp4",
+        "mime": "video/mp4",
+    },
+    "🎵  MP3 — High quality (320 kbps)": {
+        "format": "bestaudio/best",
+        "ext": "mp3",
+        "mime": "audio/mpeg",
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "320",
+        }],
+    },
+    "🎵  MP3 — Standard (192 kbps)": {
+        "format": "bestaudio/best",
+        "ext": "mp3",
+        "mime": "audio/mpeg",
+        "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
             "preferredquality": "192",
-        }]
+        }],
+    },
+    "🎵  MP3 — Small (128 kbps)": {
+        "format": "bestaudio/best",
+        "ext": "mp3",
+        "mime": "audio/mpeg",
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "128",
+        }],
+    },
+}
+
+
+def download_video(url: str, output_dir: str, fmt_key: str) -> tuple[bool, str, str | None]:
+    cfg = FORMAT_OPTIONS[fmt_key]
+    ext = cfg["ext"]
+
+    ydl_opts = {
+        "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
+        "format": cfg["format"],
+        "quiet": True,
+        "no_warnings": True,
+    }
+    if "merge_output_format" in cfg:
+        ydl_opts["merge_output_format"] = cfg["merge_output_format"]
+    if "postprocessors" in cfg:
+        ydl_opts["postprocessors"] = cfg["postprocessors"]
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
-            ext = "mp3" if is_audio else "mp4"
             base = os.path.splitext(filename)[0]
             final = f"{base}.{ext}"
             if os.path.exists(final):
                 return True, "Download complete!", final
-            candidates = sorted(Path(output_dir).glob(f"*.{ext}"), key=os.path.getmtime, reverse=True)
+            candidates = sorted(Path(output_dir).glob(f"*.{ext}"),
+                                key=os.path.getmtime, reverse=True)
             if candidates:
                 return True, "Download complete!", str(candidates[0])
-            # fallback: any file
-            all_files = sorted(Path(output_dir).iterdir(), key=os.path.getmtime, reverse=True)
+            all_files = sorted(Path(output_dir).iterdir(),
+                               key=os.path.getmtime, reverse=True)
             if all_files:
                 return True, "Download complete!", str(all_files[0])
             return False, "File not found after download.", None
     except yt_dlp.utils.DownloadError as exc:
-        msg = str(exc)
-        if "ffmpeg" in msg.lower():
-            return False, "This quality requires ffmpeg (not available on cloud). Try **Best quality (MP4)** or **480p** instead.", None
         return False, f"Download failed: {exc}", None
     except Exception as exc:
         return False, f"Unexpected error: {exc}", None
@@ -77,15 +125,18 @@ def download_video(url: str, output_dir: str, fmt: str) -> tuple[bool, str, str 
 for key, val in {
     "yt_result_path": None,
     "yt_result_ext": "mp4",
+    "yt_result_mime": "video/mp4",
     "yt_downloading": False,
     "yt_info": None,
+    "yt_last_url": "",
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
 
+
 # ── UI ─────────────────────────────────────────────────────────────────────────
 st.title(":material/play_circle: YouTube Downloader")
-st.caption("Download YouTube videos or extract audio — no ffmpeg required for most formats.")
+st.caption("Download videos as MP4 or extract audio as MP3 — pick your format below.")
 st.divider()
 
 url_input = st.text_input(
@@ -93,29 +144,47 @@ url_input = st.text_input(
     placeholder="https://www.youtube.com/watch?v=XXXXXXX",
 )
 
-# Format selector
-format_choice = st.segmented_control(
-    "Format",
-    options=["Best quality (MP4)", "720p", "480p", "Audio only (MP3)"],
-    default="Best quality (MP4)",
+# Format picker — two columns: video | audio
+col_v, col_a = st.columns(2)
+with col_v:
+    video_fmt = st.selectbox(
+        ":material/videocam: Video (MP4)",
+        options=[k for k in FORMAT_OPTIONS if "MP4" in k],
+        index=0,
+    )
+with col_a:
+    audio_fmt = st.selectbox(
+        ":material/music_note: Audio (MP3)",
+        options=[k for k in FORMAT_OPTIONS if "MP3" in k],
+        index=0,
+    )
+
+download_type = st.segmented_control(
+    "What do you want?",
+    options=["Video (MP4)", "Audio (MP3)"],
+    default="Video (MP4)",
 )
 
-# Preview info on URL entry
+chosen_fmt = video_fmt if download_type == "Video (MP4)" else audio_fmt
+
+# ── Video info preview ─────────────────────────────────────────────────────────
 if url_input.strip() and is_valid_youtube_url(url_input):
-    if st.session_state.yt_info is None or st.session_state.get("yt_last_url") != url_input.strip():
+    if st.session_state.yt_last_url != url_input.strip():
+        st.session_state.yt_info = None
+        st.session_state.yt_last_url = url_input.strip()
+
+    if st.session_state.yt_info is None:
         with st.spinner("Fetching video info…"):
-            info = fetch_video_info(url_input.strip())
-        st.session_state.yt_info = info
-        st.session_state["yt_last_url"] = url_input.strip()
+            st.session_state.yt_info = fetch_video_info(url_input.strip())
 
     info = st.session_state.yt_info
     if info:
         with st.container(border=True):
-            col1, col2 = st.columns([1, 2])
-            with col1:
+            c1, c2 = st.columns([1, 2])
+            with c1:
                 if info.get("thumbnail"):
                     st.image(info["thumbnail"])
-            with col2:
+            with c2:
                 st.markdown(f"**{info.get('title', 'Unknown title')}**")
                 channel = info.get("uploader") or info.get("channel", "")
                 duration = info.get("duration", 0)
@@ -123,18 +192,21 @@ if url_input.strip() and is_valid_youtube_url(url_input):
                 views = info.get("view_count")
                 if channel:
                     st.caption(f":material/person: {channel}")
-                st.caption(f":material/schedule: {mins}:{secs:02d}   " +
-                           (f":material/visibility: {views:,} views" if views else ""))
+                st.caption(
+                    f":material/schedule: {mins}:{secs:02d}"
+                    + (f"   :material/visibility: {views:,} views" if views else "")
+                )
 
 st.divider()
 
 download_clicked = st.button(
-    "Download",
+    f"Download {chosen_fmt.split('—')[0].strip()}",
     icon=":material/cloud_download:",
     type="primary",
     disabled=st.session_state.yt_downloading,
 )
 
+# ── Download ───────────────────────────────────────────────────────────────────
 if download_clicked:
     url = url_input.strip()
     if not url:
@@ -145,15 +217,16 @@ if download_clicked:
         st.session_state.yt_downloading = True
         st.session_state.yt_result_path = None
 
-        with st.spinner(f"Downloading — {format_choice}…"):
+        with st.spinner(f"Downloading — {chosen_fmt.strip()} …"):
             tmp_dir = tempfile.mkdtemp(prefix="yt_dl_")
-            success, message, filepath = download_video(url, tmp_dir, format_choice)
+            success, message, filepath = download_video(url, tmp_dir, chosen_fmt)
 
         st.session_state.yt_downloading = False
 
         if success and filepath:
             st.session_state.yt_result_path = filepath
-            st.session_state.yt_result_ext = "mp3" if "MP3" in format_choice else "mp4"
+            st.session_state.yt_result_ext  = FORMAT_OPTIONS[chosen_fmt]["ext"]
+            st.session_state.yt_result_mime = FORMAT_OPTIONS[chosen_fmt]["mime"]
             st.success(message)
         else:
             st.error(message)
@@ -161,16 +234,16 @@ if download_clicked:
 # ── Result ─────────────────────────────────────────────────────────────────────
 if st.session_state.yt_result_path and os.path.exists(st.session_state.yt_result_path):
     filepath = st.session_state.yt_result_path
-    ext = st.session_state.yt_result_ext
+    ext  = st.session_state.yt_result_ext
+    mime = st.session_state.yt_result_mime
+
     st.divider()
     st.subheader(":material/check_circle: Ready!")
 
     if ext == "mp4":
         st.video(filepath)
-        mime = "video/mp4"
     else:
-        st.audio(filepath)
-        mime = "audio/mpeg"
+        st.audio(filepath, format="audio/mp3")
 
     with open(filepath, "rb") as f:
         file_bytes = f.read()
