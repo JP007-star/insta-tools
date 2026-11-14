@@ -17,7 +17,21 @@ def is_valid_youtube_url(url: str) -> bool:
 
 
 def fetch_video_info(url: str) -> dict | None:
-    ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extractor_args": {
+            "youtube": {"player_client": ["android", "ios", "web"]}
+        },
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 12; Pixel 6) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/112.0.0.0 Mobile Safari/537.36"
+            ),
+        },
+    }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(url, download=False)
@@ -113,6 +127,19 @@ def download_video(url: str, output_dir: str, fmt_key: str) -> tuple[bool, str, 
         "format": cfg["format"],
         "quiet": True,
         "no_warnings": True,
+        # Spoof mobile clients to avoid 403 blocks from YouTube
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios", "web"],
+            }
+        },
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 12; Pixel 6) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/112.0.0.0 Mobile Safari/537.36"
+            ),
+        },
     }
     if "merge_output_format" in cfg:
         ydl_opts["merge_output_format"] = cfg["merge_output_format"]
