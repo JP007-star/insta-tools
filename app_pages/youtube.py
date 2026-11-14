@@ -26,32 +26,53 @@ def fetch_video_info(url: str) -> dict | None:
 
 
 FORMAT_OPTIONS = {
-    "🎬  MP4 — Best quality":  {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    "🎬  MP4 — Best quality": {
+        "format": (
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[ext=mp4]+bestaudio/"
+            "bestvideo+bestaudio[ext=m4a]/"
+            "bestvideo+bestaudio/"
+            "best[ext=mp4]/best"
+        ),
         "merge_output_format": "mp4",
         "ext": "mp4",
         "mime": "video/mp4",
     },
     "🎬  MP4 — 1080p": {
-        "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]",
+        "format": (
+            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=1080]+bestaudio/"
+            "best[height<=1080][ext=mp4]/"
+            "best[height<=1080]/best"
+        ),
         "merge_output_format": "mp4",
         "ext": "mp4",
         "mime": "video/mp4",
     },
     "🎬  MP4 — 720p": {
-        "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]",
+        "format": (
+            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=720]+bestaudio/"
+            "best[height<=720][ext=mp4]/"
+            "best[height<=720]/best"
+        ),
         "merge_output_format": "mp4",
         "ext": "mp4",
         "mime": "video/mp4",
     },
     "🎬  MP4 — 480p": {
-        "format": "best[height<=480][ext=mp4]/best[height<=480]",
+        "format": (
+            "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=480]+bestaudio/"
+            "best[height<=480][ext=mp4]/"
+            "best[height<=480]/best"
+        ),
         "merge_output_format": "mp4",
         "ext": "mp4",
         "mime": "video/mp4",
     },
     "🎵  MP3 — High quality (320 kbps)": {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "ext": "mp3",
         "mime": "audio/mpeg",
         "postprocessors": [{
@@ -61,7 +82,7 @@ FORMAT_OPTIONS = {
         }],
     },
     "🎵  MP3 — Standard (192 kbps)": {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "ext": "mp3",
         "mime": "audio/mpeg",
         "postprocessors": [{
@@ -71,7 +92,7 @@ FORMAT_OPTIONS = {
         }],
     },
     "🎵  MP3 — Small (128 kbps)": {
-        "format": "bestaudio/best",
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
         "ext": "mp3",
         "mime": "audio/mpeg",
         "postprocessors": [{
