@@ -16,13 +16,17 @@ def is_valid_youtube_url(url: str) -> bool:
     return bool(re.match(pattern, url.strip()))
 
 
-def fetch_video_info(url: str) -> dict | None:
-    ydl_opts = {
+def base_ydl_opts(cookie_path: str | None = None) -> dict:
+    """Common yt-dlp options that bypass 403 blocks."""
+    opts = {
         "quiet": True,
         "no_warnings": True,
-        "skip_download": True,
+        # tv_embedded is the least-restricted YouTube client on server IPs
         "extractor_args": {
-            "youtube": {"player_client": ["android", "ios", "web"]}
+            "youtube": {
+                "player_client": ["tv_embedded", "android", "ios", "web"],
+                "player_skip": ["webpage", "configs"],
+            }
         },
         "http_headers": {
             "User-Agent": (
@@ -32,6 +36,13 @@ def fetch_video_info(url: str) -> dict | None:
             ),
         },
     }
+    if cookie_path:
+        opts["cookiefile"] = cookie_path
+    return opts
+
+
+def fetch_video_info(url: str, cookie_path: str | None = None) -> dict | None:
+    ydl_opts = {**base_ydl_opts(cookie_path), "skip_download": True}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             return ydl.extract_info(url, download=False)
@@ -44,7 +55,6 @@ FORMAT_OPTIONS = {
         "format": (
             "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
             "bestvideo[ext=mp4]+bestaudio/"
-            "bestvideo+bestaudio[ext=m4a]/"
             "bestvideo+bestaudio/"
             "best[ext=mp4]/best"
         ),
@@ -89,57 +99,33 @@ FORMAT_OPTIONS = {
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "ext": "mp3",
         "mime": "audio/mpeg",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "320",
-        }],
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"}],
     },
     "🎵  MP3 — Standard (192 kbps)": {
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "ext": "mp3",
         "mime": "audio/mpeg",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
     },
     "🎵  MP3 — Small (128 kbps)": {
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "ext": "mp3",
         "mime": "audio/mpeg",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "128",
-        }],
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}],
     },
 }
 
 
-def download_video(url: str, output_dir: str, fmt_key: str) -> tuple[bool, str, str | None]:
+def download_video(
+    url: str, output_dir: str, fmt_key: str, cookie_path: str | None = None
+) -> tuple[bool, str, str | None]:
     cfg = FORMAT_OPTIONS[fmt_key]
     ext = cfg["ext"]
 
     ydl_opts = {
+        **base_ydl_opts(cookie_path),
         "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
         "format": cfg["format"],
-        "quiet": True,
-        "no_warnings": True,
-        # Spoof mobile clients to avoid 403 blocks from YouTube
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "ios", "web"],
-            }
-        },
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 12; Pixel 6) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/112.0.0.0 Mobile Safari/537.36"
-            ),
-        },
     }
     if "merge_output_format" in cfg:
         ydl_opts["merge_output_format"] = cfg["merge_output_format"]
@@ -177,6 +163,7 @@ for key, val in {
     "yt_downloading": False,
     "yt_info": None,
     "yt_last_url": "",
+    "yt_cookie_path": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = val
@@ -184,15 +171,48 @@ for key, val in {
 
 # ── UI ─────────────────────────────────────────────────────────────────────────
 st.title(":material/play_circle: YouTube Downloader")
-st.caption("Download videos as MP4 or extract audio as MP3 — pick your format below.")
+st.caption("Download videos as MP4 or extract audio as MP3.")
 st.divider()
 
+# ── Cookies uploader (collapsed by default) ────────────────────────────────────
+with st.expander(":material/cookie: Upload cookies.txt (fixes 403 errors)", expanded=False):
+    st.markdown(
+        """
+        YouTube blocks downloads from cloud servers without a real browser session.
+        Uploading your browser cookies fixes this instantly.
+
+        **How to export cookies.txt:**
+        1. Install the **[Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)** Chrome extension
+        2. Go to [youtube.com](https://youtube.com) while logged in
+        3. Click the extension → **Export** → save as `cookies.txt`
+        4. Upload the file below ↓
+        """
+    )
+    cookie_file = st.file_uploader(
+        "cookies.txt",
+        type=["txt"],
+        label_visibility="collapsed",
+    )
+    if cookie_file:
+        # Save to a persistent temp file for this session
+        tmp_cookie = tempfile.NamedTemporaryFile(
+            delete=False, suffix=".txt", prefix="yt_cookies_"
+        )
+        tmp_cookie.write(cookie_file.read())
+        tmp_cookie.flush()
+        tmp_cookie.close()
+        st.session_state.yt_cookie_path = tmp_cookie.name
+        st.success(":material/check_circle: Cookies loaded — 403 errors should be gone!")
+
+cookie_path = st.session_state.yt_cookie_path
+
+# ── URL input ──────────────────────────────────────────────────────────────────
 url_input = st.text_input(
     "YouTube URL",
     placeholder="https://www.youtube.com/watch?v=XXXXXXX",
 )
 
-# Format picker — two columns: video | audio
+# ── Format selector ────────────────────────────────────────────────────────────
 col_v, col_a = st.columns(2)
 with col_v:
     video_fmt = st.selectbox(
@@ -212,7 +232,6 @@ download_type = st.segmented_control(
     options=["Video (MP4)", "Audio (MP3)"],
     default="Video (MP4)",
 )
-
 chosen_fmt = video_fmt if download_type == "Video (MP4)" else audio_fmt
 
 # ── Video info preview ─────────────────────────────────────────────────────────
@@ -223,7 +242,7 @@ if url_input.strip() and is_valid_youtube_url(url_input):
 
     if st.session_state.yt_info is None:
         with st.spinner("Fetching video info…"):
-            st.session_state.yt_info = fetch_video_info(url_input.strip())
+            st.session_state.yt_info = fetch_video_info(url_input.strip(), cookie_path)
 
     info = st.session_state.yt_info
     if info:
@@ -267,7 +286,9 @@ if download_clicked:
 
         with st.spinner(f"Downloading — {chosen_fmt.strip()} …"):
             tmp_dir = tempfile.mkdtemp(prefix="yt_dl_")
-            success, message, filepath = download_video(url, tmp_dir, chosen_fmt)
+            success, message, filepath = download_video(
+                url, tmp_dir, chosen_fmt, cookie_path
+            )
 
         st.session_state.yt_downloading = False
 
@@ -278,6 +299,11 @@ if download_clicked:
             st.success(message)
         else:
             st.error(message)
+            if "403" in message:
+                st.info(
+                    "**Still getting 403?** Upload your `cookies.txt` using the "
+                    "**🍪 Upload cookies.txt** section above — this always fixes it."
+                )
 
 # ── Result ─────────────────────────────────────────────────────────────────────
 if st.session_state.yt_result_path and os.path.exists(st.session_state.yt_result_path):
