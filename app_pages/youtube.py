@@ -103,6 +103,9 @@ def download_video(
     }
     if "postprocessors" in cfg:
         ydl_opts["postprocessors"] = cfg["postprocessors"]
+    else:
+        # Fix MPEG-TS timestamp issues common in Shorts/HLS streams
+        ydl_opts["postprocessors"] = [{"key": "FFmpegFixupM3u8"}]
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
