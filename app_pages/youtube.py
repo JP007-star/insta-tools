@@ -27,20 +27,28 @@ def is_valid_youtube_url(url: str) -> bool:
     return bool(re.match(pattern, url.strip()))
 
 
+CLIENT_LIST = ["ANDROID_VR", "ANDROID", "IOS", "WEB"]
+
+def get_youtube_instance(url: str, client: str = "ANDROID_VR") -> YouTube:
+    """Create a YouTube instance with the specified client."""
+    return YouTube(url, client=client)
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_video_info(url: str) -> dict | None:
     """Fetch title, thumbnail, duration, channel — no download."""
-    try:
-        yt = YouTube(url)
-        return {
-            "title":     yt.title,
-            "thumbnail": yt.thumbnail_url,
-            "duration":  yt.length,        # seconds
-            "channel":   yt.author,
-            "views":     yt.views,
-        }
-    except Exception:
-        return None
+    for client in CLIENT_LIST:
+        try:
+            yt = get_youtube_instance(url, client=client)
+            return {
+                "title":     yt.title,
+                "thumbnail": yt.thumbnail_url,
+                "duration":  yt.length,        # seconds
+                "channel":   yt.author,
+                "views":     yt.views,
+            }
+        except Exception:
+            continue
+    return None
 
 
 QUALITY_OPTIONS = {
@@ -52,91 +60,103 @@ QUALITY_OPTIONS = {
 
 
 def download_mp4(url: str, output_dir: str, max_height: int) -> tuple[bool, str, str | None]:
-    """Download video + audio separately, merge with ffmpeg."""
-    try:
-        yt = YouTube(url)
+    """Download video + audio separately across fallback clients, merge with ffmpeg."""
+    last_err = ""
+    for client in CLIENT_LIST:
+        try:
+            yt = get_youtube_instance(url, client=client)
 
-        # Pick best mp4 video stream at or below requested height
-        video_streams = (
-            yt.streams
-            .filter(adaptive=True, file_extension="mp4", only_video=True)
-            .order_by("resolution")
-            .desc()
-        )
-        video = next(
-            (s for s in video_streams if s.resolution and int(s.resolution[:-1]) <= max_height),
-            video_streams.first(),
-        )
+            # Pick best mp4 video stream at or below requested height
+            video_streams = (
+                yt.streams
+                .filter(adaptive=True, file_extension="mp4", only_video=True)
+                .order_by("resolution")
+                .desc()
+            )
+            video = next(
+                (s for s in video_streams if s.resolution and int(s.resolution[:-1]) <= max_height),
+                video_streams.first(),
+            )
 
-        # Pick best audio (prefer m4a/mp4, fallback to webm)
-        audio = (
-            yt.streams
-            .filter(adaptive=True, only_audio=True, file_extension="mp4")
-            .order_by("abr").desc().first()
-        ) or (
-            yt.streams
-            .filter(adaptive=True, only_audio=True)
-            .order_by("abr").desc().first()
-        )
+            # Pick best audio (prefer m4a/mp4, fallback to webm)
+            audio = (
+                yt.streams
+                .filter(adaptive=True, only_audio=True, file_extension="mp4")
+                .order_by("abr").desc().first()
+            ) or (
+                yt.streams
+                .filter(adaptive=True, only_audio=True)
+                .order_by("abr").desc().first()
+            )
 
-        if not video or not audio:
-            return False, "No suitable streams found for this video.", None
+            if not video or not audio:
+                continue
 
-        vpath = video.download(output_path=output_dir, filename="video_raw.mp4")
-        apath = audio.download(output_path=output_dir, filename="audio_raw")
+            vpath = video.download(output_path=output_dir, filename=f"video_raw_{client}.mp4")
+            apath = audio.download(output_path=output_dir, filename=f"audio_raw_{client}")
 
-        # Safe filename from title
-        safe_title = re.sub(r'[\\/*?:"<>|]', "", yt.title)[:80]
-        out_path = os.path.join(output_dir, f"{safe_title}.mp4")
+            # Safe filename from title
+            safe_title = re.sub(r'[\\/*?:"<>|]', "", yt.title)[:80]
+            out_path = os.path.join(output_dir, f"{safe_title}.mp4")
 
-        ffmpeg = get_ffmpeg()
-        result = subprocess.run(
-            [ffmpeg, "-i", vpath, "-i", apath,
-             "-c:v", "copy", "-c:a", "aac", "-y", out_path],
-            capture_output=True,
-        )
+            ffmpeg = get_ffmpeg()
+            result = subprocess.run(
+                [ffmpeg, "-i", vpath, "-i", apath,
+                 "-c:v", "copy", "-c:a", "aac", "-y", out_path],
+                capture_output=True,
+            )
 
-        if result.returncode != 0:
-            return False, f"ffmpeg merge failed: {result.stderr.decode()[-300:]}", None
+            if result.returncode != 0:
+                last_err = result.stderr.decode()[-300:]
+                continue
 
-        return True, "Download complete!", out_path
+            return True, "Download complete!", out_path
 
-    except Exception as exc:
-        return False, f"Download failed: {exc}", None
+        except Exception as exc:
+            last_err = str(exc)
+            continue
+
+    return False, f"Download failed: {last_err or 'No stream could be downloaded.'}", None
 
 
 def download_mp3(url: str, output_dir: str, kbps: str) -> tuple[bool, str, str | None]:
-    """Download best audio and convert to MP3."""
-    try:
-        yt = YouTube(url)
+    """Download best audio across fallback clients and convert to MP3."""
+    last_err = ""
+    for client in CLIENT_LIST:
+        try:
+            yt = get_youtube_instance(url, client=client)
 
-        audio = (
-            yt.streams
-            .filter(adaptive=True, only_audio=True)
-            .order_by("abr").desc().first()
-        )
-        if not audio:
-            return False, "No audio stream found.", None
+            audio = (
+                yt.streams
+                .filter(adaptive=True, only_audio=True)
+                .order_by("abr").desc().first()
+            )
+            if not audio:
+                continue
 
-        apath = audio.download(output_path=output_dir, filename="audio_raw")
+            apath = audio.download(output_path=output_dir, filename=f"audio_raw_{client}")
 
-        safe_title = re.sub(r'[\\/*?:"<>|]', "", yt.title)[:80]
-        out_path = os.path.join(output_dir, f"{safe_title}.mp3")
+            safe_title = re.sub(r'[\\/*?:"<>|]', "", yt.title)[:80]
+            out_path = os.path.join(output_dir, f"{safe_title}.mp3")
 
-        ffmpeg = get_ffmpeg()
-        result = subprocess.run(
-            [ffmpeg, "-i", apath, "-vn",
-             "-ab", f"{kbps}k", "-ar", "44100", "-y", out_path],
-            capture_output=True,
-        )
+            ffmpeg = get_ffmpeg()
+            result = subprocess.run(
+                [ffmpeg, "-i", apath, "-vn",
+                 "-ab", f"{kbps}k", "-ar", "44100", "-y", out_path],
+                capture_output=True,
+            )
 
-        if result.returncode != 0:
-            return False, f"ffmpeg conversion failed: {result.stderr.decode()[-300:]}", None
+            if result.returncode != 0:
+                last_err = result.stderr.decode()[-300:]
+                continue
 
-        return True, "Download complete!", out_path
+            return True, "Download complete!", out_path
 
-    except Exception as exc:
-        return False, f"Download failed: {exc}", None
+        except Exception as exc:
+            last_err = str(exc)
+            continue
+
+    return False, f"Download failed: {last_err or 'Audio stream could not be converted.'}", None
 
 
 # ── Session state ──────────────────────────────────────────────────────────────
