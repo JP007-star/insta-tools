@@ -15,6 +15,7 @@ from youtube_publisher import (
     exchange_code_for_credentials,
     get_credentials_from_dict,
     get_channel_info,
+    get_preconfigured_credentials,
     upload_to_youtube,
     YOUTUBE_CATEGORIES,
 )
@@ -31,7 +32,23 @@ if "is_publishing" not in st.session_state:
 
 TOKEN_SAVE_PATH = os.path.join(tempfile.gettempdir(), "yt_session_token.json")
 
-# Attempt to restore token from tempfile if available
+# 1. Attempt to restore from preconfigured secrets/token.json
+if st.session_state.yt_channel is None:
+    pre_creds = get_preconfigured_credentials()
+    if pre_creds:
+        channel_info = get_channel_info(pre_creds)
+        if channel_info:
+            st.session_state.yt_channel = channel_info
+            st.session_state.yt_auth_token = {
+                "token": pre_creds.token,
+                "refresh_token": pre_creds.refresh_token,
+                "token_uri": pre_creds.token_uri,
+                "client_id": pre_creds.client_id,
+                "client_secret": pre_creds.client_secret,
+                "scopes": pre_creds.scopes,
+            }
+
+# 2. Attempt to restore token from tempfile if available
 if st.session_state.yt_auth_token is None and os.path.exists(TOKEN_SAVE_PATH):
     try:
         with open(TOKEN_SAVE_PATH, "r", encoding="utf-8") as f:
