@@ -2,7 +2,6 @@ import streamlit as st
 import os
 import json
 import tempfile
-import urllib.parse
 from pathlib import Path
 
 from insta_extractor import (
@@ -25,14 +24,20 @@ if "yt_auth_token" not in st.session_state:
     st.session_state.yt_auth_token = None
 if "yt_channel" not in st.session_state:
     st.session_state.yt_channel = None
-if "extracted_reels" not in st.session_state:
-    st.session_state.extracted_reels = []
+if "current_reel" not in st.session_state:
+    st.session_state.current_reel = None
+if "last_fetched_url" not in st.session_state:
+    st.session_state.last_fetched_url = ""
+if "batch_reels" not in st.session_state:
+    st.session_state.batch_reels = []
 if "is_publishing" not in st.session_state:
     st.session_state.is_publishing = False
+if "published_results" not in st.session_state:
+    st.session_state.published_results = {}
 
 TOKEN_SAVE_PATH = os.path.join(tempfile.gettempdir(), "yt_session_token.json")
 
-# 1. Attempt to restore from preconfigured secrets/token.json
+# 1. Restore from preconfigured credentials (secrets.toml / token.json)
 if st.session_state.yt_channel is None:
     pre_creds = get_preconfigured_credentials()
     if pre_creds:
@@ -48,7 +53,7 @@ if st.session_state.yt_channel is None:
                 "scopes": pre_creds.scopes,
             }
 
-# 2. Attempt to restore token from tempfile if available
+# 2. Restore token from tempfile if available
 if st.session_state.yt_auth_token is None and os.path.exists(TOKEN_SAVE_PATH):
     try:
         with open(TOKEN_SAVE_PATH, "r", encoding="utf-8") as f:
@@ -64,67 +69,35 @@ if st.session_state.yt_auth_token is None and os.path.exists(TOKEN_SAVE_PATH):
 
 # ── UI Header ─────────────────────────────────────────────────────────────────
 st.title(":material/cloud_upload: Instagram to YouTube Publisher")
-st.caption(
-    "Cross-post Instagram Reels to YouTube Shorts: auto-extract videos, captions, "
-    "and hashtags, then publish directly to your YouTube channel."
-)
+st.caption("Paste an Instagram Reel URL — it fetches automatically, then 1-click cross-post to YouTube Shorts.")
 st.divider()
 
-# ── 1. YouTube Channel Connection Section ─────────────────────────────────────
-st.subheader(":material/account_circle: 1. YouTube Channel Connection")
-
+# ── YouTube Channel Status Banner ─────────────────────────────────────────────
 channel = st.session_state.yt_channel
 if channel:
     with st.container(border=True):
-        col1, col2, col3 = st.columns([1, 3, 1])
-        with col1:
+        c1, c2, c3 = st.columns([1, 4, 1.2])
+        with c1:
             if channel.get("thumbnail"):
-                st.image(channel["thumbnail"], width=80)
-        with col2:
-            st.markdown(f"**Connected Channel:** {channel.get('title')}")
-            sub_count = int(channel.get("subscriberCount", 0))
-            vid_count = int(channel.get("videoCount", 0))
-            st.caption(f":material/group: {sub_count:,} Subscribers  |  :material/video_library: {vid_count:,} Videos")
-        with col3:
-            if st.button("Disconnect", icon=":material/logout:", type="secondary"):
+                st.image(channel["thumbnail"], width=65)
+            else:
+                st.markdown("## :material/account_circle:")
+        with c2:
+            st.markdown(f"**Target Channel:** `{channel.get('title')}`")
+            st.caption(f":material/check_circle: {channel.get('subscriberCount', 'Ready')} | Status: Ready to publish Shorts")
+        with c3:
+            if st.button("Change Account", icon=":material/swap_horiz:", type="secondary"):
                 st.session_state.yt_auth_token = None
                 st.session_state.yt_channel = None
                 if os.path.exists(TOKEN_SAVE_PATH):
                     os.remove(TOKEN_SAVE_PATH)
                 st.rerun()
 else:
-    st.info("Connect your YouTube Channel using a Google Cloud OAuth Client ID to enable publishing.")
-
-    with st.expander(":material/key: How to connect your YouTube Channel (OAuth Setup)", expanded=True):
-        st.markdown(
-            """
-            **Quick 3-step setup (free):**
-            1. Go to [Google Cloud Console](https://console.cloud.google.com/) -> Create project -> Enable **YouTube Data API v3**.
-            2. In **APIs & Services -> Credentials**, click **Create Credentials -> OAuth client ID** (Application Type: **Desktop App**).
-            3. Download or copy your credentials, and upload/paste them below.
-            """
-        )
-
-        auth_method = st.radio(
-            "Authentication Method:",
-            options=["Upload client_secrets.json", "Enter Client ID & Secret manually", "Upload existing token.json"],
-            horizontal=True,
-        )
-
-        client_config = None
-
-        if auth_method == "Upload client_secrets.json":
-            secrets_file = st.file_uploader("Upload client_secrets.json", type=["json"], key="secrets_uploader")
-            if secrets_file:
-                try:
-                    raw_data = json.loads(secrets_file.read().decode("utf-8"))
-                    client_config = raw_data
-                except Exception as e:
-                    st.error(f"Invalid JSON file: {e}")
-
-        elif auth_method == "Enter Client ID & Secret manually":
-            c_id = st.text_input("Google Client ID", placeholder="xxxx.apps.googleusercontent.com")
-            c_secret = st.text_input("Google Client Secret", type="password")
+    with st.container(border=True):
+        st.warning("⚠️ No YouTube Channel connected. Please connect your account below.")
+        with st.expander("Connect YouTube Channel (OAuth Setup)"):
+            c_id = st.text_input("Client ID", placeholder="xxxx.apps.googleusercontent.com")
+            c_secret = st.text_input("Client Secret", type="password")
             if c_id and c_secret:
                 client_config = {
                     "installed": {
@@ -132,242 +105,263 @@ else:
                         "client_secret": c_secret.strip(),
                         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                         "token_uri": "https://oauth2.googleapis.com/token",
-                        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"]
+                        "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob", "http://localhost"],
                     }
                 }
-
-        elif auth_method == "Upload existing token.json":
-            token_file = st.file_uploader("Upload token.json", type=["json"], key="token_uploader")
-            if token_file:
-                try:
-                    token_data = json.loads(token_file.read().decode("utf-8"))
-                    creds = get_credentials_from_dict(token_data)
-                    chan_info = get_channel_info(creds)
-                    if chan_info:
-                        st.session_state.yt_auth_token = token_data
-                        st.session_state.yt_channel = chan_info
-                        with open(TOKEN_SAVE_PATH, "w", encoding="utf-8") as f:
-                            json.dump(token_data, f)
-                        st.success(f"Connected to {chan_info['title']}!")
-                        st.rerun()
-                    else:
-                        st.error("Token is invalid or expired. Please re-authenticate.")
-                except Exception as e:
-                    st.error(f"Error loading token: {e}")
-
-        if client_config:
-            try:
                 flow = create_oauth_flow(client_config)
                 auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
-
-                st.markdown(f"**Step 2:** Click the link below to authorize your YouTube channel:")
                 st.markdown(f"👉 **[Click here to Authorize with Google]({auth_url})**")
+                auth_code = st.text_input("Paste authorization code:")
+                if st.button("Connect Channel"):
+                    token_dict = exchange_code_for_credentials(flow, auth_code.strip())
+                    creds = get_credentials_from_dict(token_dict)
+                    st.session_state.yt_auth_token = token_dict
+                    st.session_state.yt_channel = get_channel_info(creds)
+                    st.rerun()
 
-                auth_code = st.text_input(
-                    "Paste the Google Authorization Code here:",
-                    placeholder="4/0A...",
-                    help="Copy the code from Google's authorization screen and paste it here.",
+st.divider()
+
+# ── Mode Selection ────────────────────────────────────────────────────────────
+mode = st.segmented_control(
+    "Mode",
+    options=["Single Reel (Auto-Fetch)", "Batch (Multiple Reels)"],
+    default="Single Reel (Auto-Fetch)",
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODE 1: SINGLE REEL (AUTO-FETCH & 1-CLICK CROSS-POST)
+# ══════════════════════════════════════════════════════════════════════════════
+if mode == "Single Reel (Auto-Fetch)":
+    url_input = st.text_input(
+        ":material/link: Paste Instagram Reel URL",
+        placeholder="https://www.instagram.com/reel/XXXXXXXXXXX/",
+        help="Paste any public Instagram reel or video URL. It will automatically fetch as soon as pasted!",
+    )
+
+    clean_url = url_input.strip()
+
+    # ── AUTOMATIC FETCH ON PASTE ──────────────────────────────────────────────
+    if clean_url:
+        if not is_valid_instagram_url(clean_url):
+            st.error("That does not look like a valid Instagram Reel URL.")
+        else:
+            # Check if this URL needs to be fetched
+            if clean_url != st.session_state.last_fetched_url:
+                with st.spinner("🔄 Automatically fetching Instagram video & extracting metadata..."):
+                    tmp_dir = tempfile.mkdtemp(prefix="insta_auto_")
+                    success, msg, data = fetch_instagram_reel(clean_url, tmp_dir)
+                    if success and data:
+                        st.session_state.current_reel = data
+                        st.session_state.last_fetched_url = clean_url
+                        st.toast("✅ Reel fetched automatically!", icon="🎉")
+                    else:
+                        st.session_state.current_reel = None
+                        st.error(f"Failed to fetch: {msg}")
+
+    # ── DISPLAY FETCHED REEL & CROSS-POST BUTTON ──────────────────────────────
+    reel = st.session_state.current_reel
+
+    if reel and clean_url == st.session_state.last_fetched_url:
+        with st.container(border=True):
+            st.markdown(f"### :material/movie: Ready to Cross-Post: @{reel.get('uploader')}")
+
+            col_vid, col_meta = st.columns([1, 1.4])
+
+            with col_vid:
+                if os.path.exists(reel["video_path"]):
+                    st.video(reel["video_path"])
+                st.caption(f":material/person: Creator: **@{reel.get('uploader')}**")
+
+            with col_meta:
+                reel["title"] = st.text_input(
+                    "YouTube Shorts Title",
+                    value=reel.get("title", ""),
+                    max_chars=100,
+                    help="Auto-extracted from first sentence. Includes #Shorts tag.",
                 )
 
-                if st.button("Complete Connection", type="primary", icon=":material/check:"):
-                    if not auth_code.strip():
-                        st.warning("Please paste the authorization code first.")
-                    else:
-                        with st.spinner("Connecting to YouTube..."):
-                            token_dict = exchange_code_for_credentials(flow, auth_code.strip())
-                            creds = get_credentials_from_dict(token_dict)
-                            chan_info = get_channel_info(creds)
-                            if chan_info:
-                                st.session_state.yt_auth_token = token_dict
-                                st.session_state.yt_channel = chan_info
-                                with open(TOKEN_SAVE_PATH, "w", encoding="utf-8") as f:
-                                    json.dump(token_dict, f)
-                                st.success(f"Successfully connected to {chan_info['title']}!")
-                                st.rerun()
-                            else:
-                                st.error("Failed to verify YouTube channel with this authorization.")
-            except Exception as e:
-                st.error(f"OAuth initialization error: {e}")
+                reel["description"] = st.text_area(
+                    "YouTube Description",
+                    value=reel.get("description", ""),
+                    height=120,
+                    help="Includes caption, creator attribution, and hashtags.",
+                )
 
-st.divider()
+                tags_val = ", ".join(reel.get("hashtags", []))
+                new_tags = st.text_input("Tags / Hashtags", value=tags_val)
+                reel["hashtags"] = [t.strip() for t in new_tags.split(",") if t.strip()]
 
-# ── 2. Fetch Instagram Reels ──────────────────────────────────────────────────
-st.subheader(":material/download: 2. Fetch Instagram Videos & Metadata")
+                c_cat, c_priv = st.columns(2)
+                with c_cat:
+                    category = st.selectbox(
+                        "Category",
+                        options=list(YOUTUBE_CATEGORIES.keys()),
+                        format_func=lambda x: f"{YOUTUBE_CATEGORIES[x]}",
+                        index=0,
+                    )
+                with c_priv:
+                    privacy = st.selectbox(
+                        "Privacy",
+                        options=["Public", "Unlisted", "Private"],
+                        index=0,
+                    )
 
-fetch_mode = st.radio(
-    "Mode:",
-    options=["Single Reel / Post", "Batch (Multiple Reels)"],
-    horizontal=True,
-)
+            st.divider()
 
-urls_to_fetch = []
+            # ── Prominent Cross-Post Button ───────────────────────────────────
+            can_publish = st.session_state.yt_auth_token is not None
 
-if fetch_mode == "Single Reel / Post":
-    single_url = st.text_input(
-        "Instagram Reel / Video URL",
-        placeholder="https://www.instagram.com/reel/XXXXXXXXXXX/",
-    )
-    if single_url.strip():
-        if is_valid_instagram_url(single_url):
-            urls_to_fetch = [single_url.strip()]
-        else:
-            st.error("Invalid Instagram URL format.")
+            col_btn1, col_btn2 = st.columns([2, 1])
+            with col_btn1:
+                crosspost_clicked = st.button(
+                    "🚀 Cross-Post to YouTube Shorts Now",
+                    type="primary",
+                    icon=":material/rocket_launch:",
+                    disabled=not can_publish or st.session_state.is_publishing,
+                    use_container_width=True,
+                )
+            with col_btn2:
+                # Also allow direct download of the fetched file
+                with open(reel["video_path"], "rb") as f:
+                    st.download_button(
+                        label="Download MP4",
+                        data=f,
+                        file_name=os.path.basename(reel["video_path"]),
+                        mime="video/mp4",
+                        icon=":material/download:",
+                        use_container_width=True,
+                    )
+
+            if not can_publish:
+                st.info(":material/info: Connect your YouTube channel above to enable cross-posting.")
+
+            # ── Execute Cross-Post ────────────────────────────────────────────
+            if crosspost_clicked:
+                st.session_state.is_publishing = True
+                with st.spinner("Publishing to YouTube Shorts..."):
+                    creds = get_credentials_from_dict(st.session_state.yt_auth_token)
+                    ok, msg, video_id = upload_to_youtube(
+                        creds=creds,
+                        file_path=reel["video_path"],
+                        title=reel["title"],
+                        description=reel["description"],
+                        tags=reel["hashtags"],
+                        category_id=category,
+                        privacy_status=privacy,
+                    )
+
+                st.session_state.is_publishing = False
+
+                if ok and video_id:
+                    yt_url = f"https://youtu.be/{video_id}"
+                    st.success(f"🎉 **Cross-Posted to YouTube Successfully!**")
+                    st.markdown(f"### 👉 [Watch Short on YouTube: {yt_url}]({yt_url})")
+                    st.balloons()
+                else:
+                    st.error(f"Upload failed: {msg}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODE 2: BATCH CROSS-POST (MULTIPLE REELS)
+# ══════════════════════════════════════════════════════════════════════════════
 else:
-    multi_url_text = st.text_area(
-        "Paste multiple Instagram Reel URLs (one per line):",
-        placeholder="https://www.instagram.com/reel/AAA/\nhttps://www.instagram.com/reel/BBB/\n...",
-        height=120,
+    st.markdown("**Paste multiple Instagram Reel URLs to auto-extract and bulk cross-post:**")
+    batch_text = st.text_area(
+        "Instagram URLs (one per line):",
+        placeholder="https://www.instagram.com/reel/AAAAA/\nhttps://www.instagram.com/reel/BBBBB/\nhttps://www.instagram.com/reel/CCCCC/",
+        height=140,
     )
-    if multi_url_text.strip():
-        urls_to_fetch = extract_instagram_urls(multi_url_text)
-        if urls_to_fetch:
-            st.caption(f":material/playlist_add_check: Found {len(urls_to_fetch)} Instagram URL(s)")
 
-fetch_clicked = st.button(
-    f"Fetch Metadata & Video ({len(urls_to_fetch)})",
-    type="primary",
-    icon=":material/cloud_download:",
-    disabled=len(urls_to_fetch) == 0,
-)
+    detected_urls = extract_instagram_urls(batch_text) if batch_text.strip() else []
 
-if fetch_clicked:
-    st.session_state.extracted_reels = []
-    progress_bar = st.progress(0, text="Fetching reels...")
-    temp_dir = tempfile.mkdtemp(prefix="insta_batch_")
+    if detected_urls:
+        st.caption(f":material/playlist_add_check: **{len(detected_urls)} valid URL(s) detected**")
 
-    for idx, url in enumerate(urls_to_fetch):
-        progress_text = f"Fetching ({idx + 1}/{len(urls_to_fetch)}): {url[:45]}..."
-        progress_bar.progress(int((idx / len(urls_to_fetch)) * 100), text=progress_text)
+    fetch_batch_clicked = st.button(
+        f"Fetch All ({len(detected_urls)}) Videos",
+        type="primary",
+        icon=":material/cloud_download:",
+        disabled=len(detected_urls) == 0 or st.session_state.is_publishing,
+    )
 
-        ok, msg, data = fetch_instagram_reel(url, temp_dir)
-        if ok and data:
-            st.session_state.extracted_reels.append(data)
-        else:
-            st.error(f"Failed to fetch {url}: {msg}")
+    if fetch_batch_clicked:
+        st.session_state.batch_reels = []
+        progress_bar = st.progress(0, text="Fetching reels...")
+        batch_tmp = tempfile.mkdtemp(prefix="insta_batch_")
 
-    progress_bar.progress(100, text="Done fetching!")
-    if st.session_state.extracted_reels:
-        st.success(f"Successfully processed {len(st.session_state.extracted_reels)} reel(s)!")
+        for i, u in enumerate(detected_urls):
+            progress_bar.progress(int((i / len(detected_urls)) * 100), text=f"Fetching ({i + 1}/{len(detected_urls)})...")
+            ok, msg, data = fetch_instagram_reel(u, batch_tmp)
+            if ok and data:
+                st.session_state.batch_reels.append(data)
+            else:
+                st.error(f"Error fetching {u}: {msg}")
 
-st.divider()
+        progress_bar.progress(100, text="All videos fetched!")
+        st.success(f"Fetched {len(st.session_state.batch_reels)} video(s)!")
 
-# ── 3. Review, Edit & Publish to YouTube ──────────────────────────────────────
-reels = st.session_state.extracted_reels
+    # Batch Display & Publish
+    batch_items = st.session_state.batch_reels
+    if batch_items:
+        st.divider()
+        st.subheader(f":material/playlist_play: Ready for Bulk Cross-Post ({len(batch_items)} Videos)")
 
-if reels:
-    st.subheader(f":material/edit_note: 3. Review & Publish ({len(reels)} Reel{'s' if len(reels) > 1 else ''})")
-
-    # Global Publishing Settings
-    with st.container(border=True):
-        st.markdown("**Global YouTube Settings**")
-        col_cat, col_priv = st.columns(2)
-        with col_cat:
-            cat_choice = st.selectbox(
-                "YouTube Category",
+        c_bcat, c_bpriv = st.columns(2)
+        with c_bcat:
+            batch_cat = st.selectbox(
+                "Default Category",
                 options=list(YOUTUBE_CATEGORIES.keys()),
-                format_func=lambda x: f"{YOUTUBE_CATEGORIES[x]} ({x})",
+                format_func=lambda x: f"{YOUTUBE_CATEGORIES[x]}",
                 index=0,
+                key="batch_cat",
             )
-        with col_priv:
-            privacy_choice = st.selectbox(
-                "Privacy Status",
+        with c_bpriv:
+            batch_priv = st.selectbox(
+                "Default Privacy",
                 options=["Public", "Unlisted", "Private"],
                 index=0,
-                help="Recommended: Start with Unlisted or Private to review before making Public.",
+                key="batch_priv",
             )
 
-    # Edit individual video cards
-    for idx, r in enumerate(reels):
-        with st.container(border=True):
-            st.markdown(f"### Video {idx + 1}: @{r.get('uploader')}")
-            col_v, col_m = st.columns([1, 2])
+        for idx, item in enumerate(batch_items):
+            with st.expander(f"#{idx + 1}: {item['title']}", expanded=False):
+                item["title"] = st.text_input(f"Title #{idx + 1}", value=item["title"], key=f"btitle_{idx}")
+                item["description"] = st.text_area(f"Description #{idx + 1}", value=item["description"], key=f"bdesc_{idx}")
 
-            with col_v:
-                if os.path.exists(r["video_path"]):
-                    st.video(r["video_path"])
+        can_publish = st.session_state.yt_auth_token is not None
+        bulk_publish_clicked = st.button(
+            f"🚀 Bulk Cross-Post All {len(batch_items)} to YouTube",
+            type="primary",
+            icon=":material/rocket_launch:",
+            disabled=not can_publish or st.session_state.is_publishing,
+        )
+
+        if bulk_publish_clicked:
+            st.session_state.is_publishing = True
+            creds = get_credentials_from_dict(st.session_state.yt_auth_token)
+            pub_bar = st.progress(0, text="Publishing to YouTube...")
+
+            for i, item in enumerate(batch_items):
+                pub_bar.progress(int((i / len(batch_items)) * 100), text=f"Publishing ({i + 1}/{len(batch_items)}): {item['title'][:30]}...")
+                ok, msg, vid_id = upload_to_youtube(
+                    creds=creds,
+                    file_path=item["video_path"],
+                    title=item["title"],
+                    description=item["description"],
+                    tags=item["hashtags"],
+                    category_id=batch_cat,
+                    privacy_status=batch_priv,
+                )
+                st.session_state.published_results[item["url"]] = {"ok": ok, "msg": msg, "id": vid_id}
+
+            pub_bar.progress(100, text="Bulk cross-posting complete!")
+            st.session_state.is_publishing = False
+
+            st.success("Batch publishing finished! Results:")
+            for u, res in st.session_state.published_results.items():
+                if res["ok"]:
+                    st.markdown(f"✅ Published: [https://youtu.be/{res['id']}](https://youtu.be/{res['id']})")
                 else:
-                    st.warning("Video file not found.")
-
-            with col_m:
-                r["title"] = st.text_input(
-                    f"Title #{idx + 1}",
-                    value=r.get("title", ""),
-                    max_chars=100,
-                    key=f"title_{idx}",
-                )
-
-                r["description"] = st.text_area(
-                    f"Description #{idx + 1}",
-                    value=r.get("description", ""),
-                    height=130,
-                    key=f"desc_{idx}",
-                )
-
-                tag_string = ", ".join(r.get("hashtags", []))
-                edited_tags = st.text_input(
-                    f"Tags / Hashtags #{idx + 1} (comma separated)",
-                    value=tag_string,
-                    key=f"tags_{idx}",
-                )
-                r["hashtags"] = [t.strip() for t in edited_tags.split(",") if t.strip()]
-
-    st.divider()
-
-    # ── Publish Button ────────────────────────────────────────────────────────
-    can_publish = st.session_state.yt_auth_token is not None
-
-    if not can_publish:
-        st.warning("Please connect your YouTube channel in Step 1 before publishing.")
-
-    publish_btn = st.button(
-        f"Publish {len(reels)} Video(s) to YouTube",
-        type="primary",
-        icon=":material/upload:",
-        disabled=not can_publish or st.session_state.is_publishing,
-    )
-
-    if publish_btn:
-        st.session_state.is_publishing = True
-        creds = get_credentials_from_dict(st.session_state.yt_auth_token)
-
-        pub_progress = st.progress(0, text="Starting YouTube upload...")
-        results = []
-
-        for idx, r in enumerate(reels):
-            pub_progress.progress(
-                int((idx / len(reels)) * 100),
-                text=f"Uploading ({idx + 1}/{len(reels)}): {r['title'][:40]}...",
-            )
-
-            success, msg, video_id = upload_to_youtube(
-                creds=creds,
-                file_path=r["video_path"],
-                title=r["title"],
-                description=r["description"],
-                tags=r["hashtags"],
-                category_id=cat_choice,
-                privacy_status=privacy_choice,
-            )
-
-            results.append({
-                "title": r["title"],
-                "success": success,
-                "message": msg,
-                "video_id": video_id,
-            })
-
-        pub_progress.progress(100, text="Publishing complete!")
-        st.session_state.is_publishing = False
-
-        # Display results summary
-        st.subheader(":material/task_alt: Upload Results")
-        for res in results:
-            if res["success"]:
-                vid_url = f"https://youtu.be/{res['video_id']}"
-                st.success(f"**Uploaded:** {res['title']}")
-                st.markdown(f"👉 **Watch on YouTube:** [{vid_url}]({vid_url})")
-            else:
-                st.error(f"**Failed:** {res['title']} — {res['message']}")
+                    st.markdown(f"❌ Failed ({u}): {res['msg']}")
 
 st.divider()
-st.caption(":material/info: Cross-posting tool for creators. Ensure you have the rights to content before publishing.")
+st.caption(":material/info: Content is uploaded directly to your connected YouTube channel via YouTube Data API v3.")

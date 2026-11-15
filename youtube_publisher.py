@@ -166,6 +166,10 @@ def upload_to_youtube(
     Returns (success: bool, message: str, video_id: Optional[str]).
     """
     try:
+        from google.auth.transport.requests import Request
+        if creds.expired or not creds.token:
+            creds.refresh(Request())
+
         youtube = build("youtube", "v3", credentials=creds)
 
         body = {
