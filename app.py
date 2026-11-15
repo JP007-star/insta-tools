@@ -9,7 +9,7 @@ st.set_page_config(
 pg = st.navigation([
     st.Page("app_pages/instagram.py",       title="Instagram Reel Downloader", icon=":material/photo_camera:"),
     st.Page("app_pages/youtube.py",         title="YouTube Downloader",        icon=":material/play_circle:"),
-    st.Page("app_pages/insta_to_youtube.py", title="Insta to YouTube Publisher", icon=":material/auto_upload:"),
+    st.Page("app_pages/insta_to_youtube.py", title="Insta to YouTube Publisher", icon=":material/cloud_upload:"),
 ])
 
 pg.run()

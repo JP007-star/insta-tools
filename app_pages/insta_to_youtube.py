@@ -63,7 +63,7 @@ if st.session_state.yt_auth_token is None and os.path.exists(TOKEN_SAVE_PATH):
 
 
 # ── UI Header ─────────────────────────────────────────────────────────────────
-st.title(":material/auto_upload: Instagram to YouTube Publisher")
+st.title(":material/cloud_upload: Instagram to YouTube Publisher")
 st.caption(
     "Cross-post Instagram Reels to YouTube Shorts: auto-extract videos, captions, "
     "and hashtags, then publish directly to your YouTube channel."
