@@ -17,11 +17,12 @@ def is_valid_youtube_url(url: str) -> bool:
 
 
 def base_ydl_opts(cookie_path: str | None = None) -> dict:
-    """Common yt-dlp options that bypass 403 blocks."""
+    """Common yt-dlp options with EJS remote components for signature solving."""
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # Try multiple clients; each exposes different format sets
+        # Download EJS challenge solver from GitHub (fixes signature errors)
+        "allow_unplayable_formats": False,
         "extractor_args": {
             "youtube": {
                 "player_client": ["ios", "android", "tv_embedded", "web"],
@@ -34,6 +35,9 @@ def base_ydl_opts(cookie_path: str | None = None) -> dict:
                 "Chrome/112.0.0.0 Mobile Safari/537.36"
             ),
         },
+        # Enable remote EJS components so yt-dlp can solve YouTube's
+        # signature/n-challenge without a local JS runtime
+        "remote_components": "ejs:github",
     }
     if cookie_path:
         opts["cookiefile"] = cookie_path
