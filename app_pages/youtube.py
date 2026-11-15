@@ -21,11 +21,10 @@ def base_ydl_opts(cookie_path: str | None = None) -> dict:
     opts = {
         "quiet": True,
         "no_warnings": True,
-        # tv_embedded is the least-restricted YouTube client on server IPs
+        # Try multiple clients; each exposes different format sets
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv_embedded", "android", "ios", "web"],
-                "player_skip": ["webpage", "configs"],
+                "player_client": ["ios", "android", "tv_embedded", "web"],
             }
         },
         "http_headers": {
@@ -52,65 +51,45 @@ def fetch_video_info(url: str, cookie_path: str | None = None) -> dict | None:
 
 FORMAT_OPTIONS = {
     "🎬  MP4 — Best quality": {
-        "format": (
-            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-            "bestvideo[ext=mp4]+bestaudio/"
-            "bestvideo+bestaudio/"
-            "best[ext=mp4]/best"
-        ),
+        "format": "bestvideo+bestaudio/best",
+        "format_sort": ["res", "ext:mp4:m4a", "size", "br"],
         "merge_output_format": "mp4",
-        "ext": "mp4",
-        "mime": "video/mp4",
+        "ext": "mp4", "mime": "video/mp4",
     },
     "🎬  MP4 — 1080p": {
-        "format": (
-            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
-            "bestvideo[height<=1080]+bestaudio/"
-            "best[height<=1080][ext=mp4]/"
-            "best[height<=1080]/best"
-        ),
+        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        "format_sort": ["res:1080", "ext:mp4:m4a", "size", "br"],
         "merge_output_format": "mp4",
-        "ext": "mp4",
-        "mime": "video/mp4",
+        "ext": "mp4", "mime": "video/mp4",
     },
     "🎬  MP4 — 720p": {
-        "format": (
-            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
-            "bestvideo[height<=720]+bestaudio/"
-            "best[height<=720][ext=mp4]/"
-            "best[height<=720]/best"
-        ),
+        "format": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+        "format_sort": ["res:720", "ext:mp4:m4a", "size", "br"],
         "merge_output_format": "mp4",
-        "ext": "mp4",
-        "mime": "video/mp4",
+        "ext": "mp4", "mime": "video/mp4",
     },
     "🎬  MP4 — 480p": {
-        "format": (
-            "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/"
-            "bestvideo[height<=480]+bestaudio/"
-            "best[height<=480][ext=mp4]/"
-            "best[height<=480]/best"
-        ),
+        "format": "bestvideo[height<=480]+bestaudio/best[height<=480]/best",
+        "format_sort": ["res:480", "ext:mp4:m4a", "size", "br"],
         "merge_output_format": "mp4",
-        "ext": "mp4",
-        "mime": "video/mp4",
+        "ext": "mp4", "mime": "video/mp4",
     },
     "🎵  MP3 — High quality (320 kbps)": {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "ext": "mp3",
-        "mime": "audio/mpeg",
+        "format": "bestaudio/best",
+        "format_sort": ["abr", "aext:m4a:webm:ogg"],
+        "ext": "mp3", "mime": "audio/mpeg",
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "320"}],
     },
     "🎵  MP3 — Standard (192 kbps)": {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "ext": "mp3",
-        "mime": "audio/mpeg",
+        "format": "bestaudio/best",
+        "format_sort": ["abr", "aext:m4a:webm:ogg"],
+        "ext": "mp3", "mime": "audio/mpeg",
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
     },
     "🎵  MP3 — Small (128 kbps)": {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
-        "ext": "mp3",
-        "mime": "audio/mpeg",
+        "format": "bestaudio/best",
+        "format_sort": ["abr", "aext:m4a:webm:ogg"],
+        "ext": "mp3", "mime": "audio/mpeg",
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}],
     },
 }
@@ -126,6 +105,7 @@ def download_video(
         **base_ydl_opts(cookie_path),
         "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
         "format": cfg["format"],
+        "format_sort": cfg.get("format_sort", ["res", "ext:mp4:m4a", "size", "br"]),
     }
     if "merge_output_format" in cfg:
         ydl_opts["merge_output_format"] = cfg["merge_output_format"]
